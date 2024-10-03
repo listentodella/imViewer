@@ -20,10 +20,12 @@ use embassy_stm32::{
 use embassy_stm32::{spi, Config};
 use fmt::{info, error, trace};
 
-// use embassy_stm32::usb::{Driver, Instance};
-// use embassy_stm32::{bind_interrupts, peripherals, usb};
-use embassy_stm32::{bind_interrupts, peripherals};
+use embassy_futures::join::join;
+use embassy_stm32::usb_otg::{Driver, Instance};
+use embassy_stm32::{bind_interrupts, peripherals, usb_otg};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
+use embassy_usb::driver::EndpointError;
+use embassy_usb::Builder;
 
 use display_interface_spi::SPIInterface;
 use embassy_time::Duration;
@@ -39,6 +41,9 @@ use heapless::String;
 use st7789::ST7789;
 use static_cell::StaticCell;
 
+bind_interrupts!(struct Irqs {
+    OTG_FS => usb_otg::InterruptHandler<peripherals::USB_OTG_FS>;
+});
 // #[repr(C, packed)]
 #[repr(C)]
 #[derive(Clone, Copy, defmt::Format)]
@@ -99,10 +104,8 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(blinky(p.PC13.degrade())).unwrap();
 
+    spawner.spawn(usb_task()).unwrap();
 
-    // let _usb_subscriber = imu_channel.subscriber().unwrap();
-
-    // spawner.spawn(display_task(lcd)).unwrap();
     spawner.spawn(display_task()).unwrap();
 
     let mut spi_config = spi::Config::default();
@@ -250,6 +253,107 @@ async fn imu_task(
 }
 
 #[embassy_executor::task]
+async fn usb_task() {
+    // Create the driver, from the HAL.
+    let mut ep_out_buffer = [0u8; 256];
+    let mut config = embassy_stm32::usb_otg::Config::default();
+
+    // Do not enable vbus_detection. This is a safe default that works in all boards.
+    // However, if your USB device is self-powered (can stay powered on if USB is unplugged), you need
+    // to enable vbus_detection to comply with the USB spec. If you enable it, the board
+    // has to support it or USB won't work at all. See docs on `vbus_detection` for details.
+    config.vbus_detection = false;
+
+    let driver = unsafe {
+        Driver::new_fs(
+            peripherals::USB_OTG_FS::steal(),
+            Irqs,
+            peripherals::PA12::steal(),
+            peripherals::PA11::steal(),
+            &mut ep_out_buffer,
+            config)
+    };
+
+    // Create embassy-usb Config
+    let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
+    config.manufacturer = Some("Embassy");
+    config.product = Some("USB-serial example");
+    config.serial_number = Some("12345678");
+
+    // Required for windows compatibility.
+    // https://developer.nordicsemi.com/nRF_Connect_SDK/doc/1.9.1/kconfig/CONFIG_CDC_ACM_IAD.html#help
+    config.device_class = 0xEF;
+    config.device_sub_class = 0x02;
+    config.device_protocol = 0x01;
+    config.composite_with_iads = true;
+
+    // Create embassy-usb DeviceBuilder using the driver and config.
+    // It needs some buffers for building the descriptors.
+    let mut config_descriptor = [0; 256];
+    let mut bos_descriptor = [0; 256];
+    let mut control_buf = [0; 64];
+
+    let mut state = State::new();
+
+    let mut builder = Builder::new(
+        driver,
+        config,
+        &mut config_descriptor,
+        &mut bos_descriptor,
+        &mut [], // no msos descriptors
+        &mut control_buf,
+    );
+
+    // Create classes on the builder.
+    let mut class = CdcAcmClass::new(&mut builder, &mut state, 64);
+
+    // Build the builder.
+    let mut usb = builder.build();
+
+    // Run the USB device.
+    let usb_fut = usb.run();
+
+    // Do stuff with the class!
+    let echo_fut = async {
+        loop {
+            class.wait_connection().await;
+            info!("Connected");
+            let _ = echo(&mut class).await;
+            info!("Disconnected");
+        }
+    };
+
+    // Run everything concurrently.
+    // If we had made everything `'static` above instead, we could do this using separate tasks instead.
+    join(usb_fut, echo_fut).await;
+
+}
+
+struct Disconnected {}
+
+impl From<EndpointError> for Disconnected {
+    fn from(val: EndpointError) -> Self {
+        match val {
+            EndpointError::BufferOverflow => panic!("Buffer overflow"),
+            EndpointError::Disabled => Disconnected {},
+        }
+    }
+}
+
+async fn echo<'d, T: Instance + 'd>(class: &mut CdcAcmClass<'d, Driver<'d, T>>) -> Result<(), Disconnected> {
+    let mut filter = 0u64;
+    let mut out_string :String<64> = String::new();
+    loop {
+        filter += 1;
+            //info!("filter: {}", filter);
+            out_string.clear();
+            out_string.write_fmt(format_args!("Hello Embassy {}\n", filter)).unwrap();
+            let data = out_string.as_bytes();
+            class.write_packet(data).await?;
+    }
+}
+
+#[embassy_executor::task]
 async fn display_task() {
     let mut subscriber = IMU_CHANNEL.subscriber().unwrap();
     let mut spi_config = spi::Config::default();
@@ -296,7 +400,6 @@ async fn display_task() {
     let ferris = Image::new(&raw_image_data, Point::new(0, 0));
     ferris.draw(&mut lcd).unwrap();
 
-    // Create a small and a large character style.
     let large_style = MonoTextStyle::new(&FONT_10X20, Rgb565::GREEN);
     let mut_style = MonoTextStyle::new(&FONT_10X20, Rgb565::YELLOW);
     let rectangle = Rectangle::new(Point::new(0, 100), Size::new(240, 100));
