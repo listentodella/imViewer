@@ -9,13 +9,14 @@ use panic_halt as _;
 use {defmt_rtt as _, panic_probe as _};
 
 use embassy_executor::Spawner;
+use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, pubsub::{PubSubChannel, Publisher, Subscriber, WaitResult}};
 use embassy_stm32::time::mhz;
 use embassy_stm32::{
     dma::NoDma,
     gpio::{AnyPin, Input, Level, Output, Pin, Pull, Speed},
 };
 use embassy_stm32::{spi, Config};
-use fmt::{info, error};
+use fmt::{info, error, trace};
 
 // use embassy_stm32::usb::{Driver, Instance};
 // use embassy_stm32::{bind_interrupts, peripherals, usb};
@@ -24,7 +25,7 @@ use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 
 use display_interface_spi::SPIInterface;
 use embassy_time::Duration;
-use embassy_time::{Delay, Timer};
+use embassy_time::{Delay, Timer, Instant};
 use embedded_graphics::image::{ImageRawLE, *};
 use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10};
 use embedded_graphics::mono_font::MonoTextStyle;
@@ -34,7 +35,20 @@ use embedded_graphics::primitives::*;
 use embedded_graphics::text::{Alignment, LineHeight, Text, TextStyleBuilder};
 use heapless::String;
 use st7789::ST7789;
+use static_cell::StaticCell;
 
+// #[repr(C, packed)]
+#[repr(C)]
+#[derive(Clone, Copy, defmt::Format)]
+struct ImuDataType {
+    frame_id:u64,
+    timestamp:u64,
+    data: [f32;7]
+}
+
+//type ImuDataType = [f32;7];
+
+static IMU_CHANNEL : PubSubChannel<ThreadModeRawMutex, ImuDataType, 32, 2, 1> = PubSubChannel::new();
 
 #[embassy_executor::task]
 async fn blinky(pin: AnyPin) {
@@ -83,6 +97,9 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(blinky(p.PC13.degrade())).unwrap();
 
+
+    // let _usb_subscriber = imu_channel.subscriber().unwrap();
+
     // spawner.spawn(display_task(lcd)).unwrap();
     spawner.spawn(display_task()).unwrap();
 
@@ -108,6 +125,8 @@ async fn imu_task(
     mut cs: Output<'static, peripherals::PB7>,
     mut int1: embassy_stm32::exti::ExtiInput<'static, peripherals::PB8>,
 ) {
+    let mut frame_id = 0u64;
+    let publisher = IMU_CHANNEL.publisher().unwrap();
     let buf = [0x11u8, 0x01];
     cs.set_low();
     spi.write(&buf).await.unwrap();
@@ -128,16 +147,60 @@ async fn imu_task(
     }
 
     cs.set_low();
+    let buf = [0x64u8, 0x00];
+    spi.write(&buf).await.unwrap();
+    cs.set_high();
+    Timer::after_millis(100).await;
+
+    cs.set_low();
     let buf = [0x14u8, 0x03];
     spi.write(&buf).await.unwrap();
-
+    cs.set_high();
+    Timer::after_millis(100).await;
+    
+    cs.set_low();
     let buf = [0x65u8, 0x08];
     spi.write(&buf).await.unwrap();
+    cs.set_high();
+    Timer::after_millis(100).await;
 
+    cs.set_low();
     let buf = [0x4eu8, 0x0f];
     spi.write(&buf).await.unwrap();
-
     cs.set_high();
+    // Timer::after_millis(100).await;
+
+    // cs.set_low();
+    // let buf = [0x14u8 | 0x80];
+    // let mut cfg = [0x00u8];
+    // spi.write(&buf).await.unwrap();
+    // spi.read(&mut cfg).await.unwrap();
+    // info!("0x14 cfg: 0x{:02x}", cfg[0]);
+    // cs.set_high();
+
+    // cs.set_low();
+    // let buf = [0x64u8 | 0x80];
+    // let mut cfg = [0x00u8];
+    // spi.write(&buf).await.unwrap();
+    // spi.read(&mut cfg).await.unwrap();
+    // info!("0x64 cfg: 0x{:02x}", cfg[0]);
+    // cs.set_high();
+
+    // cs.set_low();
+    // let buf = [0x65u8 | 0x80];
+    // let mut cfg = [0x00u8];
+    // spi.write(&buf).await.unwrap();
+    // spi.read(&mut cfg).await.unwrap();
+    // info!("0x65 cfg: 0x{:02x}", cfg[0]);
+    // cs.set_high();
+
+    // cs.set_low();
+    // let buf = [0x4eu8 | 0x80];
+    // let mut cfg = [0x00u8];
+    // spi.write(&buf).await.unwrap();
+    // spi.read(&mut cfg).await.unwrap();
+    // info!("0x4e cfg: 0x{:02x}", cfg[0]);
+    // cs.set_high();
 
     let combine = |msb: u8, lsb: u8| ((msb as u16) << 8 | lsb as u16) as i16;
 
@@ -145,6 +208,7 @@ async fn imu_task(
         let addr = [0x1du8 | 0x80];
         let mut buf = [0x00u8; 14];
         int1.wait_for_rising_edge().await;
+        frame_id += 1;
 
         cs.set_low();
         spi.write(&addr).await.unwrap();
@@ -173,14 +237,19 @@ async fn imu_task(
             gyr[1] as f32 * 2000f32 / 32768.0f32,
             gyr[2] as f32 * 2000f32 / 32768.0f32,
         ];
-        let imu = [acc[0], acc[1], acc[2], gyr[0], gyr[1], gyr[2], temp];
-        // info!("{}", imu);
-        // Timer::after_millis(1000).await;
+
+        let imu = ImuDataType {
+            frame_id,
+            timestamp: Instant::now().as_micros(),
+            data: [acc[0], acc[1], acc[2], gyr[0], gyr[1], gyr[2], temp],
+        };
+        publisher.publish(imu).await;
     }
 }
 
 #[embassy_executor::task]
 async fn display_task() {
+    let mut subscriber = IMU_CHANNEL.subscriber().unwrap();
     let mut spi_config = spi::Config::default();
     spi_config.frequency = mhz(24);
     let spi = unsafe { peripherals::SPI4::steal() };
@@ -221,7 +290,8 @@ async fn display_task() {
         .unwrap();
     lcd.clear(Rgb565::BLACK).unwrap();
 
-
-
-
+    loop {
+        let imu = subscriber.next_message_pure().await;
+        trace!("imu: {},", imu);
+    }
 }
