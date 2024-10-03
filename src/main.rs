@@ -3,6 +3,8 @@
 
 mod fmt;
 
+use core::fmt::Write;
+
 #[cfg(not(feature = "defmt"))]
 use panic_halt as _;
 #[cfg(feature = "defmt")]
@@ -251,7 +253,7 @@ async fn imu_task(
 async fn display_task() {
     let mut subscriber = IMU_CHANNEL.subscriber().unwrap();
     let mut spi_config = spi::Config::default();
-    spi_config.frequency = mhz(24);
+    spi_config.frequency = mhz(100);
     let spi = unsafe { peripherals::SPI4::steal() };
     let cs = Output::new(
         unsafe { peripherals::PE11::steal() },
@@ -290,8 +292,63 @@ async fn display_task() {
         .unwrap();
     lcd.clear(Rgb565::BLACK).unwrap();
 
+    let raw_image_data = ImageRawLE::new(include_bytes!("../assets/ferris.raw"), 86);
+    let ferris = Image::new(&raw_image_data, Point::new(0, 0));
+    ferris.draw(&mut lcd).unwrap();
+
+    // Create a small and a large character style.
+    let large_style = MonoTextStyle::new(&FONT_10X20, Rgb565::GREEN);
+    let mut_style = MonoTextStyle::new(&FONT_10X20, Rgb565::YELLOW);
+    let rectangle = Rectangle::new(Point::new(0, 100), Size::new(240, 100));
+
+    let mut filter  = 0u64;
+    let mut text: String<32> = String::new();
     loop {
         let imu = subscriber.next_message_pure().await;
-        trace!("imu: {},", imu);
+        // trace!("imu: {},", imu);
+        filter += 1;
+        if  filter % 500 == 0 {
+            lcd.fill_solid(&rectangle, Rgb565::BLACK).unwrap();
+            // Draw the first text at (20, 30) using the small character style.
+            let fid_pos = Text::new("frameid: ", Point::new(0, 120), large_style)
+                .draw(&mut lcd)
+                .unwrap();
+            // Draw the second text after the first text using the large character style.
+            let ts_pos = Text::new("timestamp: ", Point::new(0, 140), large_style).draw(&mut lcd).unwrap();
+            let acc_pos = Text::new("acc: ", Point::new(0, 160), large_style).draw(&mut lcd).unwrap();
+            let gyr_pos = Text::new("gyr: ", Point::new(0, 180), large_style).draw(&mut lcd).unwrap();
+            let tmp_pos = Text::new("temp: ", Point::new(0, 200), large_style).draw(&mut lcd).unwrap();
+
+            text.clear();
+            text.write_fmt(format_args!("{}", imu.frame_id)).unwrap();
+            let _ = Text::new(text.as_str(), fid_pos, mut_style)
+                .draw(&mut lcd)
+                .unwrap();
+
+            text.clear();
+            text.write_fmt(format_args!("{}", imu.timestamp)).unwrap();
+            let _ = Text::new(text.as_str(), ts_pos, mut_style)
+                .draw(&mut lcd)
+                .unwrap();
+
+            text.clear();
+            text.write_fmt(format_args!("{:.3},{:.3},{:.3}", imu.data[0], imu.data[1], imu.data[2])).unwrap();
+            let _ = Text::new(text.as_str(), acc_pos, mut_style)
+                .draw(&mut lcd)
+                .unwrap();
+
+            text.clear();
+            text.write_fmt(format_args!("{:.3},{:.3},{:.3}", imu.data[3], imu.data[4], imu.data[5])).unwrap();
+            let _ = Text::new(text.as_str(), gyr_pos, mut_style)
+                .draw(&mut lcd)
+                .unwrap();
+
+            text.clear();
+            text.write_fmt(format_args!("{:.3}", imu.data[6])).unwrap();
+            let _ = Text::new(text.as_str(), tmp_pos, mut_style)
+                .draw(&mut lcd)
+                .unwrap();
+        }
+
     }
 }
