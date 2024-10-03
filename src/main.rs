@@ -11,14 +11,14 @@ use panic_halt as _;
 use {defmt_rtt as _, panic_probe as _};
 
 use embassy_executor::Spawner;
-use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, pubsub::{PubSubChannel, Publisher, Subscriber, WaitResult}};
 use embassy_stm32::time::mhz;
 use embassy_stm32::{
     dma::NoDma,
     gpio::{AnyPin, Input, Level, Output, Pin, Pull, Speed},
 };
 use embassy_stm32::{spi, Config};
-use fmt::{info, error, trace};
+use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, pubsub::PubSubChannel};
+use fmt::{error, info, trace};
 
 use embassy_futures::join::join;
 use embassy_stm32::usb_otg::{Driver, Instance};
@@ -29,33 +29,33 @@ use embassy_usb::Builder;
 
 use display_interface_spi::SPIInterface;
 use embassy_time::Duration;
-use embassy_time::{Delay, Timer, Instant};
+use embassy_time::{Delay, Instant, Timer};
 use embedded_graphics::image::{ImageRawLE, *};
-use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10};
+use embedded_graphics::mono_font::ascii::FONT_10X20;
 use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::{Rgb565, Rgb888};
+use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::*;
-use embedded_graphics::text::{Alignment, LineHeight, Text, TextStyleBuilder};
+use embedded_graphics::text::Text;
 use heapless::String;
 use st7789::ST7789;
-use static_cell::StaticCell;
 
 bind_interrupts!(struct Irqs {
     OTG_FS => usb_otg::InterruptHandler<peripherals::USB_OTG_FS>;
 });
+// if packed, it will cannot be used for Format
 // #[repr(C, packed)]
 #[repr(C)]
 #[derive(Clone, Copy, defmt::Format)]
 struct ImuDataType {
-    frame_id:u64,
-    timestamp:u64,
-    data: [f32;7]
+    frame_id: u64,
+    timestamp: u64,
+    data: [f32; 7],
 }
 
 //type ImuDataType = [f32;7];
 
-static IMU_CHANNEL : PubSubChannel<ThreadModeRawMutex, ImuDataType, 32, 2, 1> = PubSubChannel::new();
+static IMU_CHANNEL: PubSubChannel<ThreadModeRawMutex, ImuDataType, 32, 2, 1> = PubSubChannel::new();
 
 #[embassy_executor::task]
 async fn blinky(pin: AnyPin) {
@@ -162,7 +162,7 @@ async fn imu_task(
     spi.write(&buf).await.unwrap();
     cs.set_high();
     Timer::after_millis(100).await;
-    
+
     cs.set_low();
     let buf = [0x65u8, 0x08];
     spi.write(&buf).await.unwrap();
@@ -271,7 +271,8 @@ async fn usb_task() {
             peripherals::PA12::steal(),
             peripherals::PA11::steal(),
             &mut ep_out_buffer,
-            config)
+            config,
+        )
     };
 
     // Create embassy-usb Config
@@ -326,7 +327,6 @@ async fn usb_task() {
     // Run everything concurrently.
     // If we had made everything `'static` above instead, we could do this using separate tasks instead.
     join(usb_fut, echo_fut).await;
-
 }
 
 struct Disconnected {}
@@ -340,16 +340,16 @@ impl From<EndpointError> for Disconnected {
     }
 }
 
-async fn echo<'d, T: Instance + 'd>(class: &mut CdcAcmClass<'d, Driver<'d, T>>) -> Result<(), Disconnected> {
-    let mut filter = 0u64;
-    let mut out_string :String<64> = String::new();
+async fn echo<'d, T: Instance + 'd>(
+    class: &mut CdcAcmClass<'d, Driver<'d, T>>,
+) -> Result<(), Disconnected> {
+    let mut subscriber = IMU_CHANNEL.subscriber().unwrap();
     loop {
-        filter += 1;
-            //info!("filter: {}", filter);
-            out_string.clear();
-            out_string.write_fmt(format_args!("Hello Embassy {}\n", filter)).unwrap();
-            let data = out_string.as_bytes();
-            class.write_packet(data).await?;
+        let imu = subscriber.next_message_pure().await;
+        let data = unsafe {
+            core::mem::transmute::<&ImuDataType, &[u8; core::mem::size_of::<ImuDataType>()]>(&imu)
+        };
+        class.write_packet(data).await?;
     }
 }
 
@@ -404,23 +404,31 @@ async fn display_task() {
     let mut_style = MonoTextStyle::new(&FONT_10X20, Rgb565::YELLOW);
     let rectangle = Rectangle::new(Point::new(0, 100), Size::new(240, 100));
 
-    let mut filter  = 0u64;
+    let mut filter = 0u64;
     let mut text: String<32> = String::new();
     loop {
         let imu = subscriber.next_message_pure().await;
         // trace!("imu: {},", imu);
         filter += 1;
-        if  filter % 500 == 0 {
+        if filter % 500 == 0 {
             lcd.fill_solid(&rectangle, Rgb565::BLACK).unwrap();
             // Draw the first text at (20, 30) using the small character style.
             let fid_pos = Text::new("frameid: ", Point::new(0, 120), large_style)
                 .draw(&mut lcd)
                 .unwrap();
             // Draw the second text after the first text using the large character style.
-            let ts_pos = Text::new("timestamp: ", Point::new(0, 140), large_style).draw(&mut lcd).unwrap();
-            let acc_pos = Text::new("acc: ", Point::new(0, 160), large_style).draw(&mut lcd).unwrap();
-            let gyr_pos = Text::new("gyr: ", Point::new(0, 180), large_style).draw(&mut lcd).unwrap();
-            let tmp_pos = Text::new("temp: ", Point::new(0, 200), large_style).draw(&mut lcd).unwrap();
+            let ts_pos = Text::new("timestamp: ", Point::new(0, 140), large_style)
+                .draw(&mut lcd)
+                .unwrap();
+            let acc_pos = Text::new("acc: ", Point::new(0, 160), large_style)
+                .draw(&mut lcd)
+                .unwrap();
+            let gyr_pos = Text::new("gyr: ", Point::new(0, 180), large_style)
+                .draw(&mut lcd)
+                .unwrap();
+            let tmp_pos = Text::new("temp: ", Point::new(0, 200), large_style)
+                .draw(&mut lcd)
+                .unwrap();
 
             text.clear();
             text.write_fmt(format_args!("{}", imu.frame_id)).unwrap();
@@ -435,13 +443,21 @@ async fn display_task() {
                 .unwrap();
 
             text.clear();
-            text.write_fmt(format_args!("{:.3},{:.3},{:.3}", imu.data[0], imu.data[1], imu.data[2])).unwrap();
+            text.write_fmt(format_args!(
+                "{:.3},{:.3},{:.3}",
+                imu.data[0], imu.data[1], imu.data[2]
+            ))
+            .unwrap();
             let _ = Text::new(text.as_str(), acc_pos, mut_style)
                 .draw(&mut lcd)
                 .unwrap();
 
             text.clear();
-            text.write_fmt(format_args!("{:.3},{:.3},{:.3}", imu.data[3], imu.data[4], imu.data[5])).unwrap();
+            text.write_fmt(format_args!(
+                "{:.3},{:.3},{:.3}",
+                imu.data[3], imu.data[4], imu.data[5]
+            ))
+            .unwrap();
             let _ = Text::new(text.as_str(), gyr_pos, mut_style)
                 .draw(&mut lcd)
                 .unwrap();
@@ -452,6 +468,5 @@ async fn display_task() {
                 .draw(&mut lcd)
                 .unwrap();
         }
-
     }
 }
