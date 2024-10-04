@@ -6,6 +6,7 @@ name = "imViewer"
 version = "0.1.0"
 
 [dependencies]
+assign-resources = "0.4.1"
 cortex-m = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
 cortex-m-rt = "0.7.3"
 defmt = { version = "0.3.8", optional = true }

@@ -10,6 +10,7 @@ use panic_halt as _;
 #[cfg(feature = "defmt")]
 use {defmt_rtt as _, panic_probe as _};
 
+use assign_resources::assign_resources;
 use embassy_executor::Spawner;
 use embassy_stm32::time::mhz;
 use embassy_stm32::{
@@ -57,6 +58,34 @@ struct ImuDataType {
 
 static IMU_CHANNEL: PubSubChannel<ThreadModeRawMutex, ImuDataType, 32, 2, 1> = PubSubChannel::new();
 
+assign_resources! {
+    usb: UsbResources {
+        dp: PA12,
+        dm: PA11,
+        usb: USB_OTG_FS,
+    }
+    lcd: LcdResources {
+        cs: PE11,
+        sck: PE12,
+        mosi: PE14,
+        //txdma: DMA1_CH3,
+        dc: PE15,
+        bl: PD15,
+        spi: SPI4,
+    }
+    imu: ImuResources {
+        spi: SPI3,
+        sck: PB3,
+        mosi: PB5,
+        miso: PB4,
+        txdma: DMA1_CH3,
+        rxdma: DMA1_CH4,
+        cs: PB7,
+        int1: PB8,
+        exti:EXTI8
+    }
+}
+
 #[embassy_executor::task]
 async fn blinky(pin: AnyPin) {
     let mut led = Output::new(pin, Level::High, Speed::Low);
@@ -101,23 +130,12 @@ async fn main(spawner: Spawner) {
         // config.rcc.mux.usbsel = mux::Usbsel::HSI48;
     }
     let p = embassy_stm32::init(config);
+    let r = split_resources!(p);
 
     spawner.spawn(blinky(p.PC13.degrade())).unwrap();
-
-    spawner.spawn(usb_task()).unwrap();
-
-    spawner.spawn(display_task()).unwrap();
-
-    let mut spi_config = spi::Config::default();
-    spi_config.frequency = mhz(16);
-    // PB7-CS, PB8-int1, PB9-int2
-    let spi = spi::Spi::new(
-        p.SPI3, p.PB3, p.PB5, p.PB4, p.DMA1_CH3, p.DMA1_CH4, spi_config,
-    );
-    let cs = Output::new(p.PB7, Level::High, Speed::High);
-    let int1 = Input::new(p.PB8, Pull::Down);
-    let int1 = embassy_stm32::exti::ExtiInput::new(int1, p.EXTI8);
-    spawner.spawn(imu_task(spi, cs, int1)).unwrap();
+    spawner.spawn(usb_task(r.usb)).unwrap();
+    spawner.spawn(display_task(r.lcd)).unwrap();
+    spawner.spawn(imu_task(r.imu)).unwrap();
 
     loop {
         Timer::after(Duration::from_millis(1000)).await;
@@ -125,11 +143,14 @@ async fn main(spawner: Spawner) {
 }
 
 #[embassy_executor::task]
-async fn imu_task(
-    mut spi: spi::Spi<'static, peripherals::SPI3, peripherals::DMA1_CH3, peripherals::DMA1_CH4>,
-    mut cs: Output<'static, peripherals::PB7>,
-    mut int1: embassy_stm32::exti::ExtiInput<'static, peripherals::PB8>,
-) {
+async fn imu_task(r: ImuResources) {
+    let mut spi_config = spi::Config::default();
+    spi_config.frequency = mhz(16);
+    let mut spi = spi::Spi::new(r.spi, r.sck, r.mosi, r.miso, r.txdma, r.rxdma, spi_config);
+    let mut cs = Output::new(r.cs, Level::High, Speed::High);
+    let int1 = Input::new(r.int1, Pull::Down);
+    let mut int1 = embassy_stm32::exti::ExtiInput::new(int1, r.exti);
+
     let mut frame_id = 0u64;
     let publisher = IMU_CHANNEL.publisher().unwrap();
     let buf = [0x11u8, 0x01];
@@ -253,7 +274,7 @@ async fn imu_task(
 }
 
 #[embassy_executor::task]
-async fn usb_task() {
+async fn usb_task(r: UsbResources) {
     // Create the driver, from the HAL.
     let mut ep_out_buffer = [0u8; 256];
     let mut config = embassy_stm32::usb_otg::Config::default();
@@ -264,16 +285,7 @@ async fn usb_task() {
     // has to support it or USB won't work at all. See docs on `vbus_detection` for details.
     config.vbus_detection = false;
 
-    let driver = unsafe {
-        Driver::new_fs(
-            peripherals::USB_OTG_FS::steal(),
-            Irqs,
-            peripherals::PA12::steal(),
-            peripherals::PA11::steal(),
-            &mut ep_out_buffer,
-            config,
-        )
-    };
+    let driver = Driver::new_fs(r.usb, Irqs, r.dp, r.dm, &mut ep_out_buffer, config);
 
     // Create embassy-usb Config
     let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
@@ -354,37 +366,18 @@ async fn echo<'d, T: Instance + 'd>(
 }
 
 #[embassy_executor::task]
-async fn display_task() {
+async fn display_task(r: LcdResources) {
     let mut subscriber = IMU_CHANNEL.subscriber().unwrap();
     let mut spi_config = spi::Config::default();
     spi_config.frequency = mhz(100);
-    let spi = unsafe { peripherals::SPI4::steal() };
-    let cs = Output::new(
-        unsafe { peripherals::PE11::steal() },
-        Level::Low,
-        Speed::Low,
-    );
-    let dc = Output::new(
-        unsafe { peripherals::PE15::steal() },
-        Level::Low,
-        Speed::Low,
-    );
-    let bl = Output::new(
-        unsafe { peripherals::PD15::steal() },
-        Level::Low,
-        Speed::Low,
-    );
+    let cs = Output::new(r.cs, Level::Low, Speed::Low);
+    let dc = Output::new(r.dc, Level::Low, Speed::Low);
+    let bl = Output::new(r.bl, Level::Low, Speed::Low);
 
-    let spi = unsafe {
-        spi::Spi::new_txonly(
-            spi,
-            peripherals::PE12::steal(),
-            peripherals::PE14::steal(),
-            peripherals::DMA1_CH3::steal(),
-            NoDma,
-            spi_config,
-        )
-    };
+    let spi = spi::Spi::new_txonly(
+        r.spi, r.sck, r.mosi, NoDma, //r.txdma,
+        NoDma, spi_config,
+    );
 
     let di = SPIInterface::new(spi, dc, cs);
     let mut lcd = ST7789::new(di, None::<Output<AnyPin>>, Some(bl), 240, 320);

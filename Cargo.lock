@@ -21,6 +21,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c84fc003e338a6f69fbd4f7fe9f92b535ff13e9af8997f3b14b6ddff8b1df46d"
 
 [[package]]
+name = "assign-resources"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c0fc5119624f5c171d084b6a1bd3b6447dfadab980bb0d84717906239b77f85"
+
+[[package]]
 name = "atomic-polyfill"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -814,6 +820,7 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 name = "imViewer"
 version = "0.1.0"
 dependencies = [
+ "assign-resources",
  "cortex-m",
  "cortex-m-rt",
  "defmt",
