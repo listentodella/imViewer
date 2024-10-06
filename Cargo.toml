@@ -19,17 +19,25 @@ embassy-stm32 = { version = "0.1.0", features = ["memory-x", "stm32h750vb", "tim
 embassy-sync = "0.6.0"
 embassy-time = { version = "0.3.2", features = ["tick-hz-32_768"] }
 embassy-usb = { version = "0.3.0", features = ["defmt"] }
-embedded-graphics = "0.7"
-embedded-graphics-core = "0.4.0"
+embedded-graphics = "0.8.1"
 embedded-hal = "0.2.7"
 embedded-hal-bus = { version = "0.2.0", features = ["async"] }
 heapless = "0.8.0"
 icm426xx = { version = "0.2.4", features = ["async"] }
 panic-halt = "0.2.0"
 panic-probe = { version = "0.3.2", features = ["print-defmt"], optional = true }
-st7789 = "0.7.0"
+#st7789 = "0.7.0"
+st7789 = {version = "0.7.0", git = 'https://github.com/listentodella/st7789.git'}
 static_cell = "2.1.0"
 tinybmp = "0.6.0"
+
+# failed to align the same egc version for all crates through patch section :(
+# refer: https://gatowololo.github.io/blog/cargo-patch/
+#[patch.crates-io]
+#embedded-graphics-core = {version = "0.4.0", "https://github.com/embedded-graphics/embedded-graphics", rev = "0873f47" }
+#[patch."https://github.com/embedded-graphics/embedded-graphics"]
+
+
 
 [[bin]]
 name = "imViewer"
