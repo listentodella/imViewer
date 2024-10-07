@@ -176,25 +176,21 @@ async fn imu_task(r: ImuResources) {
     let buf = [0x64u8, 0x00];
     spi.write(&buf).await.unwrap();
     cs.set_high();
-    Timer::after_millis(100).await;
 
     cs.set_low();
     let buf = [0x14u8, 0x03];
     spi.write(&buf).await.unwrap();
     cs.set_high();
-    Timer::after_millis(100).await;
 
     cs.set_low();
     let buf = [0x65u8, 0x08];
     spi.write(&buf).await.unwrap();
     cs.set_high();
-    Timer::after_millis(100).await;
 
     cs.set_low();
     let buf = [0x4eu8, 0x0f];
     spi.write(&buf).await.unwrap();
     cs.set_high();
-    // Timer::after_millis(100).await;
 
     // cs.set_low();
     // let buf = [0x14u8 | 0x80];
@@ -269,7 +265,11 @@ async fn imu_task(r: ImuResources) {
             timestamp: Instant::now().as_micros(),
             data: [acc[0], acc[1], acc[2], gyr[0], gyr[1], gyr[2], temp],
         };
-        publisher.publish(imu).await;
+        // this ensures that all subscribers will not miss the data in the queue
+        // but it may block some subscribers once one of subscribers reads lately
+        // publisher.publish(imu).await;
+        // this ensures that any subscriber can recv the data without waiting for other subscribers
+        publisher.publish_immediate(imu);
     }
 }
 
