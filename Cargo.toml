@@ -30,6 +30,7 @@ panic-probe = { version = "0.3.2", features = ["print-defmt"], optional = true }
 st7789 = {version = "0.7.0", git = 'https://github.com/listentodella/st7789.git'}
 static_cell = "2.1.0"
 tinybmp = "0.6.0"
+usbd-hid = { version = "0.8.2", features = ["defmt"] }
 
 # failed to align the same egc version for all crates through patch section :(
 # refer: https://gatowololo.github.io/blog/cargo-patch/
@@ -57,6 +58,8 @@ opt-level = "z"
 incremental = true
 
 [features]
+cdc = []
+hid = []
 defmt = ["dep:defmt"]
 defmt-rtt = ["dep:defmt-rtt"]
 panic-probe = ["dep:panic-probe"]
