@@ -1,11 +1,10 @@
 // #![no_std]
 // #![no_main]
 
-use crate::
-    UsbResources;
+use crate::UsbResources;
 use embassy_futures::join::join;
 
-use embassy_stm32::usb_otg::{Driver, Instance, Config};
+use embassy_stm32::usb_otg::{Config, Driver, Instance};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;

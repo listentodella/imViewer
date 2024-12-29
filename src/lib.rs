@@ -9,7 +9,7 @@ use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, pubsub::PubSubChanne
 
 pub mod display;
 pub mod imu;
-pub mod usb;
+pub mod xfer;
 
 assign_resources! {
     usb: UsbResources {

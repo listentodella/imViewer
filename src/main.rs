@@ -1,11 +1,11 @@
 #![no_std]
 #![no_main]
 
+use defmt::info;
 #[cfg(not(feature = "defmt"))]
 use panic_halt as _;
 #[cfg(feature = "defmt")]
 use {defmt_rtt as _, panic_probe as _};
-use defmt::info;
 
 // use assign_resources::assign_resources;
 use embassy_executor::Spawner;
@@ -15,7 +15,7 @@ use embassy_stm32::Config;
 
 use imViewer::display::display_task;
 use imViewer::imu::imu_task;
-use imViewer::usb::usb_task;
+use imViewer::xfer::usb::usb_task;
 use imViewer::{split_resources, AssignedResources, ImuResources, LcdResources, UsbResources};
 
 // use embassy_futures::join::join;

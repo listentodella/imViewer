@@ -3,8 +3,8 @@
 
 use crate::fmt::{error, info};
 use crate::ImuDataType;
-use crate::IMU_CHANNEL;
 use crate::ImuResources;
+use crate::IMU_CHANNEL;
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::spi;
 use embassy_stm32::time::mhz;
