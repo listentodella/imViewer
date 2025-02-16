@@ -11,7 +11,9 @@ use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 #[cfg(feature = "hid")]
 use embassy_usb::class::hid::{HidWriter, ReportId, RequestHandler, State};
 use embassy_usb::control::OutResponse;
-use usbd_hid::descriptor::{MouseReport, SerializedDescriptor};
+#[cfg(feature = "hid")]
+use hut::*;
+use usbd_hid::descriptor::{gen_hid_descriptor, generator_prelude::*, SerializedDescriptor};
 
 use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
@@ -23,6 +25,50 @@ use crate::IMU_CHANNEL;
 
 #[embassy_executor::task]
 pub async fn usb_task(r: UsbResources) {
+    let desc = [
+        /* USER CODE BEGIN 0 */
+        0x06,
+        0x00,
+        0xff, /* USAGE_PAGE (Vendor Defined Page 1) */
+        0x09,
+        0x01, /* USAGE (Vendor Usage 1) */
+        0xa1,
+        0x01, /* COLLECTION (Application) */
+        0x85,
+        0x02, /*   REPORT ID (0x02) */
+        0x09,
+        0x01, /*   USAGE (Vendor Usage 1) */
+        0x15,
+        0x00, /*   LOGICAL_MINIMUM (0) */
+        0x26,
+        0xff,
+        0x00, /*   LOGICAL_MAXIMUM (255) */
+        0x95,
+        0x40 - 1, /*   REPORT_COUNT (63) */
+        0x75,
+        0x08, /*   REPORT_SIZE (8) */
+        0x81,
+        0x02, /*   INPUT (Data,Var,Abs) */
+        /* <___________________________________________________> */
+        0x85,
+        0x01, /*   REPORT ID (0x01) */
+        0x09,
+        0x01, /*   USAGE (Vendor Usage 1) */
+        0x15,
+        0x00, /*   LOGICAL_MINIMUM (0) */
+        0x26,
+        0xff,
+        0x00, /*   LOGICAL_MAXIMUM (255) */
+        0x95,
+        0x40 - 1, /*   REPORT_COUNT (63) */
+        0x75,
+        0x08, /*   REPORT_SIZE (8) */
+        0x91,
+        0x02, /*   OUTPUT (Data,Var,Abs) */
+        /* USER CODE END 0 */
+        0xC0, /*     END_COLLECTION	             */
+    ];
+
     // Create the driver, from the HAL.
     let mut ep_out_buffer = [0u8; 256];
     let mut config = Config::default();
@@ -38,7 +84,7 @@ pub async fn usb_task(r: UsbResources) {
     // Create embassy-usb Config
     let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
     config.manufacturer = Some("Embassy");
-    config.product = Some("USB-serial example");
+    config.product = Some("USB hid example");
     config.serial_number = Some("12345678");
 
     // Required for windows compatibility.
@@ -72,10 +118,11 @@ pub async fn usb_task(r: UsbResources) {
     {
         // Create classes on the builder.
         let config = embassy_usb::class::hid::Config {
-            report_descriptor: MouseReport::desc(),
+            //report_descriptor: &desc,
+            report_descriptor: CustomUnaryUnsignedFrame::desc(),
             request_handler: Some(&mut request_handler),
-            poll_ms: 60,
-            max_packet_size: 8,
+            poll_ms: 10,
+            max_packet_size: 64,
         };
 
         let mut writer = HidWriter::<_, 5>::new(&mut builder, &mut state, config);
@@ -88,17 +135,12 @@ pub async fn usb_task(r: UsbResources) {
 
         // Do stuff with the class!
         let hid_fut = async {
-            let mut y: i8 = 100;
             loop {
                 Timer::after_millis(100).await;
 
-                y = -y;
-                let report = MouseReport {
-                    buttons: 0,
-                    x: 0,
-                    y,
-                    wheel: 0,
-                    pan: 0,
+                let report = CustomUnaryUnsignedFrame {
+                    f1: 0x5a,
+                    f2: 0xa5a5,
                 };
                 match writer.write_serialize(&report).await {
                     Ok(()) => {}
@@ -189,4 +231,29 @@ impl RequestHandler for MyRequestHandler {
         info!("Get idle rate for {:?}", id);
         None
     }
+}
+
+// This should generate this descriptor:
+// 0x06, 0x00, 0xFF,  // Usage Page (Vendor Defined 0xFF00)
+// 0x09, 0x01,        // Usage (0x01)
+// 0xA1, 0x01,        // Collection (Application)
+// 0x15, 0x00,        //   Logical Minimum (0)
+// 0x26, 0xFF, 0x00,  //   Logical Maximum (255)
+// 0x75, 0x08,        //   Report Size (8)
+// 0x95, 0x01,        //   Report Count (1)
+// 0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+// 0x27, 0xFF, 0xFF, 0x00, 0x00,  //   Logical Maximum (65534)
+// 0x75, 0x10,        //   Report Size (16)
+// 0x91, 0x02,        //   Output (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
+// 0xC1,              // End Collection
+#[gen_hid_descriptor(
+        (collection = 0x01, usage = 0x01, usage_page = 0xff00) = {
+            f1=input;
+            f2=output;
+        }
+    )]
+#[allow(dead_code)]
+struct CustomUnaryUnsignedFrame {
+    f1: u8,
+    f2: u16,
 }

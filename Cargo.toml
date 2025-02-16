@@ -23,6 +23,8 @@ embedded-graphics = "0.8.1"
 embedded-hal = "0.2.7"
 embedded-hal-bus = { version = "0.2.0", features = ["async"] }
 heapless = "0.8.0"
+#hidreport = { version = "0.5.0", default-features = false, features = ["hut"] }
+hut  = { version = "0.3.0", git = 'https://github.com/hidutils/hut.git', default-features = false, optional = true }
 icm426xx = { version = "0.2.4", features = ["async"] }
 panic-halt = "0.2.0"
 panic-probe = { version = "0.3.2", features = ["print-defmt"], optional = true }
@@ -58,8 +60,9 @@ opt-level = "z"
 incremental = true
 
 [features]
+no_std= []
 cdc = []
-hid = []
+hid = ["dep:hut"]
 defmt = ["dep:defmt"]
 defmt-rtt = ["dep:defmt-rtt"]
 panic-probe = ["dep:panic-probe"]

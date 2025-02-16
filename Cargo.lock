@@ -734,6 +734,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "hut"
+version = "0.3.0"
+source = "git+https://github.com/hidutils/hut.git#9b8aeade02515eac7c98506a2679c59984941fab"
+
+[[package]]
 name = "icm426xx"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -774,6 +779,7 @@ dependencies = [
  "embedded-hal 0.2.7",
  "embedded-hal-bus",
  "heapless",
+ "hut",
  "icm426xx",
  "panic-halt",
  "panic-probe",
